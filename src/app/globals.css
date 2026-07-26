@@ -1,26 +1,102 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* Be The Good brand system (BRAND.md §5).
+   Purple carries the brand, gold is the spark, cream keeps it warm. */
+@theme {
+  --color-purple-50: #f4f0fa;
+  --color-purple-100: #e6dcf5;
+  --color-purple-200: #d4c4f0;
+  --color-purple-300: #c9b8e8;
+  --color-purple-400: #9b7ac9;
+  --color-purple-500: #7a52ad;
+  --color-purple-600: #4f2683;
+  --color-purple-700: #3f1e69;
+  --color-purple-800: #2e154d;
+  --color-purple-900: #1a1224;
+
+  --color-gold-100: #f7ecd0;
+  --color-gold-300: #e3c368;
+  --color-gold-500: #d4a017;
+  --color-gold-600: #c9a227;
+  --color-gold-700: #a07c12;
+
+  --color-cream: #f7f3ec;
+  --color-cream-dark: #ede6da;
+  --color-ink: #1a1224;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Utility layer for patterns repeated across the dashboard. */
+@layer components {
+  .btg-card {
+    @apply rounded-xl border border-cream-dark bg-white shadow-sm;
+  }
+
+  .btg-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2
+           text-sm font-medium transition-colors disabled:cursor-not-allowed
+           disabled:opacity-50;
+  }
+
+  .btg-btn-primary {
+    @apply btg-btn bg-purple-600 text-white hover:bg-purple-700;
+  }
+
+  .btg-btn-gold {
+    @apply btg-btn bg-gold-500 text-purple-900 hover:bg-gold-600;
+  }
+
+  .btg-btn-ghost {
+    @apply btg-btn border border-cream-dark bg-white text-purple-900
+           hover:bg-cream;
+  }
+
+  .btg-input {
+    @apply w-full rounded-lg border border-cream-dark bg-white px-3 py-2 text-sm
+           text-ink outline-none transition
+           placeholder:text-purple-900/35
+           focus:border-purple-400 focus:ring-2 focus:ring-purple-200;
+  }
+
+  .btg-label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide
+           text-purple-900/55;
+  }
+
+  .btg-chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs
+           font-medium ring-1 ring-inset;
+  }
+}
+
+/* Keep drag interactions from selecting text mid-drag. */
+.btg-dragging,
+.btg-dragging * {
+  user-select: none;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d9d1c4;
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
