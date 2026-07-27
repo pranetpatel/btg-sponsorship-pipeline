@@ -1,8 +1,21 @@
 "use client";
 
-import { CATEGORY_LABEL, money } from "@/lib/constants";
+import {
+  CATEGORY_LABEL,
+  chainBrand,
+  isSingleLocation,
+  money,
+} from "@/lib/constants";
 import type { SponsorCategory, SponsorWithStats } from "@/lib/types";
-import { Eye, MousePointerClick, Mail, MailX } from "lucide-react";
+import {
+  Building2,
+  Eye,
+  MousePointerClick,
+  Mail,
+  MailX,
+  MapPin,
+  Phone,
+} from "lucide-react";
 
 export default function SponsorCard({
   sponsor,
@@ -17,6 +30,8 @@ export default function SponsorCard({
   onOpen: () => void;
   dragging?: boolean;
 }) {
+  const brand = chainBrand(sponsor);
+
   return (
     <div
       className={`btg-card p-3 transition ${
@@ -58,6 +73,26 @@ export default function SponsorCard({
           </span>
         )}
 
+        {brand ? (
+          <span
+            className="btg-chip bg-slate-100 text-slate-600 ring-slate-300/60"
+            title={`Part of ${brand} — sponsorship asks usually go through head office`}
+          >
+            <Building2 size={11} />
+            {brand}
+          </span>
+        ) : isSingleLocation(sponsor) ? (
+          <span className="btg-chip bg-teal-50 text-teal-700 ring-teal-200">
+            <MapPin size={11} />
+            local
+          </span>
+        ) : null}
+
+        {/*
+          One contact chip, best available first: how many emails we have
+          sent, then the email we could send to, then the phone number
+          somebody has to call. Only a lead with neither gets the red one.
+        */}
         {sponsor.email ? (
           sponsor.outreach_count > 0 ? (
             <span className="btg-chip bg-purple-50 text-purple-700 ring-purple-200">
@@ -65,10 +100,15 @@ export default function SponsorCard({
               {sponsor.outreach_count}
             </span>
           ) : null
+        ) : sponsor.phone ? (
+          <span className="btg-chip bg-amber-50 text-amber-700 ring-amber-200">
+            <Phone size={11} />
+            call only
+          </span>
         ) : (
           <span className="btg-chip bg-rose-50 text-rose-600 ring-rose-200">
             <MailX size={11} />
-            no email
+            no contact
           </span>
         )}
 

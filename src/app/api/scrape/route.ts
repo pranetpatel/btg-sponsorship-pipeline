@@ -3,36 +3,89 @@ import { ok, fail, handleError } from "@/lib/api";
 import { requireTeam } from "@/lib/session";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { logActivity } from "@/lib/activity";
-import { fetchOsmLeads, enrichEmails, type ScrapeGroup } from "@/lib/scraper";
+import {
+  fetchOsmLeads,
+  enrichEmails,
+  type ScrapedLead,
+  type ScrapeGroup,
+} from "@/lib/scraper";
+import type { ContactRule } from "@/lib/scrape-groups";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+/**
+ * Whatever is left of maxDuration once Overpass has had its turn, minus a
+ * reserve for the inserts at the end. Overpass can spend minutes backing off
+ * a rate limit, so the website crawl has to take what remains rather than
+ * assume a fixed slice — otherwise a slow lead search kills the whole
+ * request and the team gets nothing.
+ */
+const REQUEST_BUDGET_MS = 285_000;
+const INSERT_RESERVE_MS = 25_000;
+
+/** Does this lead clear the bar the team set for contact info? */
+function reachable(lead: ScrapedLead, rule: ContactRule) {
+  if (rule === "any") return true;
+  if (rule === "email") return Boolean(lead.email);
+  return Boolean(lead.email || lead.phone);
+}
+
 export async function POST(req: NextRequest) {
   try {
+    const startedAt = Date.now();
     const member = await requireTeam();
     const {
       groups = ["local_business"],
       limit = 60,
       findEmails = true,
+      localOnly = true,
+      contactRule = "email_or_phone",
     } = (await req.json()) as {
       groups?: ScrapeGroup[];
       limit?: number;
       findEmails?: boolean;
+      localOnly?: boolean;
+      contactRule?: ContactRule;
     };
 
     if (!groups.length) return fail("Pick at least one lead type");
     const cap = Math.min(Math.max(Number(limit) || 60, 1), 200);
 
-    const leads = await fetchOsmLeads(groups, cap);
-    if (!leads.length) {
-      return ok({ found: 0, imported: 0, skipped: 0, emailsFound: 0, leads: [] });
+    // Pull a much wider net than the team asked for, because most of it gets
+    // thrown away. Measured over 388 London businesses in OpenStreetMap:
+    // about a third are chain locations, and 77% carry no contact details of
+    // any kind. Roughly five candidates go in for every usable lead that
+    // comes out. The list is trimmed back to `cap` below.
+    const pool = Math.min(Math.max(cap * 5, 100), 400);
+    const { leads: candidates, scanned, chainsSkipped } = await fetchOsmLeads(
+      groups,
+      pool,
+      { localOnly },
+    );
+
+    if (!candidates.length) {
+      return ok({
+        scanned,
+        chainsSkipped,
+        found: 0,
+        imported: 0,
+        skipped: 0,
+        emailsFound: 0,
+        noContactSkipped: 0,
+        withEmail: 0,
+      });
     }
 
-    // Cap the website crawl so a big pull cannot run past the function limit.
+    const crawlBudget =
+      REQUEST_BUDGET_MS - (Date.now() - startedAt) - INSERT_RESERVE_MS;
     const emailsFound = findEmails
-      ? (await enrichEmails(leads, Math.min(cap, 40))).found
+      ? (await enrichEmails(candidates, { deadlineMs: crawlBudget })).found
       : 0;
+
+    const reachableLeads = candidates.filter((l) => reachable(l, contactRule));
+    const noContactSkipped = candidates.length - reachableLeads.length;
+    const leads = reachableLeads.slice(0, cap);
 
     const db = supabaseAdmin();
 
@@ -81,15 +134,29 @@ export async function POST(req: NextRequest) {
     await logActivity({
       actor: member.name,
       action: "leads.scraped",
-      detail: { groups, found: leads.length, imported, skipped, emailsFound },
+      detail: {
+        groups,
+        localOnly,
+        contactRule,
+        scanned,
+        chainsSkipped,
+        noContactSkipped,
+        found: leads.length,
+        imported,
+        skipped,
+        emailsFound,
+      },
     });
 
     return ok({
+      scanned,
+      chainsSkipped,
+      noContactSkipped,
       found: leads.length,
       imported,
       skipped,
       emailsFound,
-      withEmail: leads.filter((l) => l.email).length,
+      withEmail: withEmail.length,
     });
   } catch (err) {
     return handleError(err);

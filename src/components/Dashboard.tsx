@@ -20,6 +20,7 @@ import {
   ORG,
   STATUSES,
   STATUS_META,
+  chainBrand,
 } from "@/lib/constants";
 import type { SponsorStatus } from "@/lib/types";
 import { usePipeline } from "./usePipeline";
@@ -53,6 +54,7 @@ export default function Dashboard({
   const [statusFilter, setStatusFilter] = useState<Set<SponsorStatus>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set());
   const [onlyEmailable, setOnlyEmailable] = useState(false);
+  const [hideChains, setHideChains] = useState(false);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -60,12 +62,13 @@ export default function Dashboard({
       if (statusFilter.size && !statusFilter.has(s.status)) return false;
       if (categoryFilter.size && !categoryFilter.has(s.category)) return false;
       if (onlyEmailable && !s.email) return false;
+      if (hideChains && chainBrand(s)) return false;
       if (!q) return true;
       return [s.name, s.email, s.contact_name, s.industry, s.notes, s.location]
         .filter(Boolean)
         .some((field) => String(field).toLowerCase().includes(q));
     });
-  }, [sponsors, search, statusFilter, categoryFilter, onlyEmailable]);
+  }, [sponsors, search, statusFilter, categoryFilter, onlyEmailable, hideChains]);
 
   // Selections survive filter changes, but the action bar only ever acts on
   // sponsors currently visible, so nothing hidden gets emailed by surprise.
@@ -117,6 +120,7 @@ export default function Dashboard({
     statusFilter.size > 0 ||
     categoryFilter.size > 0 ||
     onlyEmailable ||
+    hideChains ||
     search.length > 0;
 
   return (
@@ -237,6 +241,19 @@ export default function Dashboard({
             Has email
           </label>
 
+          <label
+            className="flex items-center gap-1.5 whitespace-nowrap text-sm text-purple-900/70"
+            title="Hides anything tagged as a chain or franchise location"
+          >
+            <input
+              type="checkbox"
+              checked={hideChains}
+              onChange={(e) => setHideChains(e.target.checked)}
+              className="h-4 w-4 accent-[#4F2683]"
+            />
+            Hide chains
+          </label>
+
           {filtersOn && (
             <button
               onClick={() => {
@@ -244,6 +261,7 @@ export default function Dashboard({
                 setStatusFilter(new Set());
                 setCategoryFilter(new Set());
                 setOnlyEmailable(false);
+                setHideChains(false);
               }}
               className="text-sm text-purple-900/50 underline-offset-2 hover:text-purple-700 hover:underline"
             >

@@ -81,6 +81,28 @@ export const ORG = {
   city: "London, ON",
 };
 
+/**
+ * Chain vs. local, read back off the tags the scraper writes.
+ *
+ * Rows added by hand or from a CSV carry no scope tag, so both of these
+ * return falsy for them. That is deliberate: an untagged row is unknown, not
+ * a chain, and the "local only" filter should never quietly hide something
+ * a team member typed in themselves.
+ */
+export function chainBrand(sponsor: {
+  custom_fields?: Record<string, string> | null;
+}) {
+  const fields = sponsor.custom_fields;
+  if (fields?.scope !== "chain") return null;
+  return fields.brand || "Chain";
+}
+
+export function isSingleLocation(sponsor: {
+  custom_fields?: Record<string, string> | null;
+}) {
+  return sponsor.custom_fields?.scope === "local";
+}
+
 export function statusLabel(s: SponsorStatus) {
   return STATUS_META[s].label;
 }

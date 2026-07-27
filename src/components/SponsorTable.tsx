@@ -2,7 +2,13 @@
 
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
-import { CATEGORY_LABEL, STATUSES, STATUS_META, money } from "@/lib/constants";
+import {
+  CATEGORY_LABEL,
+  STATUSES,
+  STATUS_META,
+  chainBrand,
+  money,
+} from "@/lib/constants";
 import type {
   SponsorCategory,
   SponsorStatus,
@@ -154,12 +160,17 @@ export default function SponsorTable({
                     {s.name}
                   </button>
                   <span className="block max-w-full truncate text-xs text-purple-900/50">
-                    {s.email ?? "no email on file"}
+                    {s.email ?? s.phone ?? "no contact info"}
                   </span>
                 </td>
 
                 <td className="px-3 py-2.5 text-purple-900/70">
                   {CATEGORY_LABEL[s.category as SponsorCategory] ?? s.category}
+                  {chainBrand(s) && (
+                    <span className="ml-1.5 text-xs text-purple-900/40">
+                      chain
+                    </span>
+                  )}
                 </td>
 
                 <td className="px-3 py-2.5">

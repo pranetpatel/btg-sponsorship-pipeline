@@ -3,7 +3,12 @@
 import { useState } from "react";
 import { Download, Globe, Upload } from "lucide-react";
 import Modal from "./Modal";
-import { SCRAPE_GROUPS, type ScrapeGroup } from "@/lib/scrape-groups";
+import {
+  CONTACT_RULES,
+  SCRAPE_GROUPS,
+  type ContactRule,
+  type ScrapeGroup,
+} from "@/lib/scrape-groups";
 
 type Tab = "scrape" | "csv" | "manual";
 
@@ -61,9 +66,14 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
   );
   const [limit, setLimit] = useState(60);
   const [findEmails, setFindEmails] = useState(true);
+  const [localOnly, setLocalOnly] = useState(true);
+  const [contactRule, setContactRule] = useState<ContactRule>("email_or_phone");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
+    scanned: number;
+    chainsSkipped: number;
+    noContactSkipped: number;
     found: number;
     imported: number;
     skipped: number;
@@ -88,7 +98,13 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
       const res = await fetch("/api/scrape", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ groups: [...groups], limit, findEmails }),
+        body: JSON.stringify({
+          groups: [...groups],
+          limit,
+          findEmails,
+          localOnly,
+          contactRule,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Lead search failed");
@@ -105,15 +121,17 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
     <div className="space-y-5">
       <p className="text-sm text-purple-900/65">
         Pulls businesses and organizations around London, Ontario from
-        OpenStreetMap, then checks their websites for a contact email.
-        Duplicates are matched on email and skipped.
+        OpenStreetMap, screens out chains, hunts down a contact email on each
+        website, and drops anything you would have no way to reach. Duplicates
+        are matched on email and skipped.
       </p>
       <p className="rounded-lg bg-cream-dark/50 px-3 py-2.5 text-sm text-purple-900/70">
-        Worth knowing: most listings come with a name, address, and phone, but
-        only some have a website, and the email usually has to be found on that
-        website. Expect a good chunk of these to need a phone call or a quick
-        look at their contact page. Leave the email checkbox on, it does most
-        of that work for you.
+        Worth knowing before you set the number: OpenStreetMap is thin on
+        contact details. Of the London businesses listed there, about 18% have
+        a website, 17% a phone number, and only 1% an email — the rest are
+        just a name on a map. Searching websites is what turns most of the
+        first group into real addresses. Asking for 60 and getting 25 is
+        normal, and those 25 are ones you can actually write to.
       </p>
 
       <div>
@@ -147,10 +165,70 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
         </div>
       </div>
 
+      <div>
+        <p className="btg-label">Who to keep</p>
+        <label
+          className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition ${
+            localOnly
+              ? "border-purple-400 bg-purple-50"
+              : "border-cream-dark bg-white hover:border-purple-200"
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={localOnly}
+            onChange={(e) => setLocalOnly(e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-[#4F2683]"
+          />
+          <span>
+            <span className="block text-sm font-medium text-purple-800">
+              Independent businesses only
+            </span>
+            <span className="block text-xs text-purple-900/55">
+              Skips chains and franchises — TD, Metro, 7-Eleven, Tim Hortons —
+              and anything with more than one location around London. A branch
+              manager cannot approve a sponsorship anyway.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <div>
+        <p className="btg-label">Contact info required</p>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {CONTACT_RULES.map((r) => (
+            <label
+              key={r.value}
+              className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition ${
+                contactRule === r.value
+                  ? "border-purple-400 bg-purple-50"
+                  : "border-cream-dark bg-white hover:border-purple-200"
+              }`}
+            >
+              <input
+                type="radio"
+                name="contact-rule"
+                checked={contactRule === r.value}
+                onChange={() => setContactRule(r.value)}
+                className="mt-0.5 h-4 w-4 accent-[#4F2683]"
+              />
+              <span>
+                <span className="block text-sm font-medium text-purple-800">
+                  {r.label}
+                </span>
+                <span className="block text-xs text-purple-900/55">
+                  {r.hint}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className="btg-label" htmlFor="limit">
-            How many, up to {limit}
+            How many to add, up to {limit}
           </label>
           <input
             id="limit"
@@ -170,9 +248,17 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
             onChange={(e) => setFindEmails(e.target.checked)}
             className="h-4 w-4 accent-[#4F2683]"
           />
-          Also check websites for emails (slower)
+          Search websites for emails (slower, finds most of them)
         </label>
       </div>
+
+      {!findEmails && contactRule === "email" && (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Requiring an email without searching websites will find almost
+          nothing — OpenStreetMap itself carries an email for very few
+          businesses. Turn the website search back on.
+        </p>
+      )}
 
       {error && (
         <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -181,14 +267,29 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
       )}
 
       {result && (
-        <div className="rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
-          Found {result.found}, added {result.imported} new
-          {result.skipped ? `, skipped ${result.skipped} already on the list` : ""}.{" "}
-          {result.withEmail} have an email
-          {result.emailsFound
-            ? `, ${result.emailsFound} of those came from their website`
-            : ""}
-          .
+        <div className="space-y-1.5 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
+          <p className="font-medium">
+            Added {result.imported} new{" "}
+            {result.imported === 1 ? "sponsor" : "sponsors"}, {result.withEmail}{" "}
+            of them with an email.
+          </p>
+          <p className="text-emerald-900/70">
+            Looked at {result.scanned} listings.
+            {result.chainsSkipped
+              ? ` Passed on ${result.chainsSkipped} chain ${
+                  result.chainsSkipped === 1 ? "location" : "locations"
+                }.`
+              : ""}
+            {result.noContactSkipped
+              ? ` Passed on ${result.noContactSkipped} with no way to reach them.`
+              : ""}
+            {result.skipped
+              ? ` ${result.skipped} were already on your list.`
+              : ""}
+            {result.emailsFound
+              ? ` ${result.emailsFound} emails came off the businesses' own websites.`
+              : ""}
+          </p>
         </div>
       )}
 

@@ -35,3 +35,32 @@ export const SCRAPE_GROUPS: {
     hint: "Grocers, pharmacies, wholesale",
   },
 ];
+
+/**
+ * The bar a lead has to clear on contact info before it is worth a card on
+ * the board. Anything below the bar is dropped at import rather than saved,
+ * because a row with no email and no phone is just noise to scroll past.
+ */
+export type ContactRule = "email" | "email_or_phone" | "any";
+
+export const CONTACT_RULES: {
+  value: ContactRule;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "email",
+    label: "Email only",
+    hint: "Ready to send to right away",
+  },
+  {
+    value: "email_or_phone",
+    label: "Email or phone",
+    hint: "Reachable one way or another",
+  },
+  {
+    value: "any",
+    label: "Keep everything",
+    hint: "Includes leads you'd have to look up yourself",
+  },
+];
