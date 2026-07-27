@@ -1,5 +1,8 @@
 import * as cheerio from "cheerio";
 import { normalizeCategory } from "./sponsors";
+import type { ScrapeGroup } from "./scrape-groups";
+
+export type { ScrapeGroup };
 
 /**
  * Lead discovery for the London, Ontario area.
@@ -14,16 +17,19 @@ import { normalizeCategory } from "./sponsors";
  * with a website and no email, which the team can fill in by hand.
  */
 
-const OVERPASS = "https://overpass-api.de/api/interpreter";
+/**
+ * Overpass endpoints, tried in order. The main instance returns 504 fairly
+ * often under load, and the failure is almost always transient, so a retry
+ * across mirrors matters more here than picking the "right" host.
+ */
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+];
 
 /** Bounding box: south, west, north, east — greater London, Ontario. */
 const LONDON_ON_BBOX = [42.83, -81.45, 43.07, -81.09] as const;
-
-export type ScrapeGroup =
-  | "local_business"
-  | "corporate"
-  | "nonprofit"
-  | "supplier";
 
 /**
  * OSM tag filters per group. Each entry becomes one Overpass clause.
@@ -105,17 +111,41 @@ function buildQuery(groups: ScrapeGroup[], limit: number) {
 out tags center ${Math.min(limit * 3, 900)};`;
 }
 
-function groupOf(tags: Record<string, string>): ScrapeGroup {
-  const bag = `${tags.shop ?? ""} ${tags.amenity ?? ""} ${tags.office ?? ""} ${tags.leisure ?? ""}`;
+/**
+ * Exact tag value -> group, built once from the filters above.
+ *
+ * This has to be exact rather than substring: office=it would otherwise
+ * match "community_centre" and file every community centre as corporate.
+ * First group to claim a value wins, matching the declaration order.
+ */
+const VALUE_TO_GROUP: Map<string, ScrapeGroup> = (() => {
+  const map = new Map<string, ScrapeGroup>();
   for (const [group, cfg] of Object.entries(GROUP_FILTERS) as [
     ScrapeGroup,
     (typeof GROUP_FILTERS)[ScrapeGroup],
   ][]) {
-    const values = cfg.filters
-      .join("|")
-      .match(/\^\(([^)]+)\)\$/g)
-      ?.flatMap((m) => m.slice(2, -2).split("|")) ?? [];
-    if (values.some((v) => bag.includes(v))) return group;
+    for (const filter of cfg.filters) {
+      // Enumerated form: key~"^(a|b|c)$"
+      const enumerated = filter.match(/\^\(([^)]+)\)\$/);
+      if (enumerated) {
+        for (const value of enumerated[1].split("|")) {
+          if (!map.has(value)) map.set(value, group);
+        }
+        continue;
+      }
+      // Single value form: key="value"
+      const single = filter.match(/=\s*"([^"]+)"/);
+      if (single && !map.has(single[1])) map.set(single[1], group);
+    }
+  }
+  return map;
+})();
+
+function groupOf(tags: Record<string, string>): ScrapeGroup {
+  for (const key of ["shop", "amenity", "office", "leisure"] as const) {
+    const value = tags[key];
+    const group = value ? VALUE_TO_GROUP.get(value) : undefined;
+    if (group) return group;
   }
   return "local_business";
 }
@@ -136,32 +166,70 @@ function addressOf(tags: Record<string, string>) {
   return parts.join(", ");
 }
 
+/**
+ * Runs the query against each endpoint in turn and returns the first
+ * successful response.
+ *
+ * Overpass rate limits per IP hard: measured against the live API, roughly
+ * two quick requests succeed and then it returns 429 for about a minute.
+ * Retrying fast makes that worse, so a 429 gets a long pause rather than an
+ * immediate hop to the next host. One scrape run is one request, so a team
+ * doing this a few times a day never notices.
+ */
+async function runOverpass(query: string): Promise<OverpassElement[]> {
+  const attempts = [...OVERPASS_ENDPOINTS, ...OVERPASS_ENDPOINTS];
+  let lastError = "";
+  let rateLimited = false;
+
+  for (let i = 0; i < attempts.length; i++) {
+    let throttled = false;
+
+    try {
+      const res = await fetch(attempts[i], {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "user-agent": "BeTheGoodUWO-SponsorPipeline/1.0 (student nonprofit)",
+        },
+        body: new URLSearchParams({ data: query }),
+        signal: AbortSignal.timeout(45_000),
+      });
+
+      if (res.ok) {
+        const json = (await res.json()) as { elements?: OverpassElement[] };
+        return json.elements ?? [];
+      }
+
+      // 429 is an explicit rate limit, 504 usually means the same thing
+      // under load. Both want patience rather than another request.
+      throttled = res.status === 429 || res.status === 504;
+      rateLimited ||= throttled;
+      lastError = `HTTP ${res.status}`;
+    } catch (err) {
+      lastError = (err as Error).message;
+    }
+
+    if (i < attempts.length - 1) {
+      await new Promise((r) => setTimeout(r, throttled ? 20_000 : 1500));
+    }
+  }
+
+  throw new Error(
+    rateLimited
+      ? "OpenStreetMap is rate limiting us right now. Give it about a minute and press Find leads again."
+      : `Could not reach OpenStreetMap (${lastError}). Check your connection and try again.`,
+  );
+}
+
 export async function fetchOsmLeads(
   groups: ScrapeGroup[],
   limit: number,
 ): Promise<ScrapedLead[]> {
-  const res = await fetch(OVERPASS, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      "user-agent": "BeTheGoodUWO-SponsorPipeline/1.0 (student nonprofit)",
-    },
-    body: new URLSearchParams({ data: buildQuery(groups, limit) }),
-    // Overpass can be slow under load; fail loudly rather than hang the UI.
-    signal: AbortSignal.timeout(70_000),
-  });
-
-  if (!res.ok) {
-    throw new Error(
-      `Overpass returned ${res.status}. It rate limits heavily, try again in a minute.`,
-    );
-  }
-
-  const json = (await res.json()) as { elements?: OverpassElement[] };
+  const elements = await runOverpass(buildQuery(groups, limit));
   const seen = new Set<string>();
   const leads: ScrapedLead[] = [];
 
-  for (const el of json.elements ?? []) {
+  for (const el of elements) {
     const tags = el.tags ?? {};
     const name = tags.name?.trim();
     if (!name) continue;
@@ -306,27 +374,3 @@ export async function enrichEmails(
 
   return { leads, found };
 }
-
-export const SCRAPE_GROUPS: { value: ScrapeGroup; label: string; hint: string }[] =
-  [
-    {
-      value: "local_business",
-      label: "Local businesses",
-      hint: "Cafes, restaurants, shops, gyms",
-    },
-    {
-      value: "corporate",
-      label: "Corporate",
-      hint: "Offices, banks, professional services",
-    },
-    {
-      value: "nonprofit",
-      label: "Nonprofits",
-      hint: "Charities, community centres, faith groups",
-    },
-    {
-      value: "supplier",
-      label: "Suppliers",
-      hint: "Grocers, pharmacies, wholesale",
-    },
-  ];

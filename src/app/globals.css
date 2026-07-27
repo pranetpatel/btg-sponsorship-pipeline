@@ -47,23 +47,27 @@ body {
     @apply rounded-xl border border-cream-dark bg-white shadow-sm;
   }
 
-  .btg-btn {
+  /* Tailwind v4 cannot @apply a class defined in the same layer, so the
+     shared button base is listed on each variant rather than composed. */
+  .btg-btn,
+  .btg-btn-primary,
+  .btg-btn-gold,
+  .btg-btn-ghost {
     @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2
            text-sm font-medium transition-colors disabled:cursor-not-allowed
            disabled:opacity-50;
   }
 
   .btg-btn-primary {
-    @apply btg-btn bg-purple-600 text-white hover:bg-purple-700;
+    @apply bg-purple-600 text-white hover:bg-purple-700;
   }
 
   .btg-btn-gold {
-    @apply btg-btn bg-gold-500 text-purple-900 hover:bg-gold-600;
+    @apply bg-gold-500 text-purple-900 hover:bg-gold-600;
   }
 
   .btg-btn-ghost {
-    @apply btg-btn border border-cream-dark bg-white text-purple-900
-           hover:bg-cream;
+    @apply border border-cream-dark bg-white text-purple-900 hover:bg-cream;
   }
 
   .btg-input {
