@@ -11,7 +11,10 @@ type SupabaseEnv = {
  */
 export function getSupabaseEnv(): SupabaseEnv {
   return {
-    url: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    url:
+      process.env.NEXT_PUBLIC_SUPABASE_URL ??
+      // Common dashboard typo fallback seen in manual env entry.
+      process.env.NEXT_PUBLIIC_SUPABASE_URL,
     publishableKey:
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
       // Common dashboard typo fallback seen in manual env entry.
