@@ -1,6 +1,7 @@
 "use client";
 
 import { createBrowserClient } from "@supabase/ssr";
+import { getSupabaseEnv } from "@/lib/supabase/env";
 
 /**
  * Read-only + realtime client for the dashboard. All writes go through
@@ -10,16 +11,16 @@ let cached: ReturnType<typeof createBrowserClient> | null = null;
 
 export function supabaseBrowser() {
   if (!cached) {
+    const { url, publishableKey } = getSupabaseEnv();
     cached = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      url!,
+      publishableKey!,
     );
   }
   return cached;
 }
 
-export const realtimeEnabled = () =>
-  Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL &&
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  );
+export const realtimeEnabled = () => {
+  const { url, publishableKey } = getSupabaseEnv();
+  return Boolean(url && publishableKey);
+};

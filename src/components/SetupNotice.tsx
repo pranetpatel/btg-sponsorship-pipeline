@@ -25,7 +25,7 @@ export default function SetupNotice() {
           },
           {
             title: "Copy .env.example to .env.local",
-            body: "Fill in NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY from Project Settings, API.",
+            body: "Fill in NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY), and SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_ROLE_KEY) from Project Settings, API.",
           },
           {
             title: "Restart the dev server",

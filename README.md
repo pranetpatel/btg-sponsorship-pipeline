@@ -18,8 +18,8 @@ email). Nothing here costs money at the volumes a student club sends.
    tables, the realtime setup, and the five email templates.
 3. Go to **Project Settings → API** and copy three values:
    - Project URL
-   - `anon` public key
-   - `service_role` secret key
+   - `publishable` key (or legacy `anon` key)
+   - `secret` key (or legacy `service_role` key)
 
 ### 2. Resend
 
@@ -43,8 +43,8 @@ Fill it in. The ones that matter:
 | Variable | What it is |
 | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` | Project URL from step 1 |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon key, safe in the browser |
-| `SUPABASE_SERVICE_ROLE_KEY` | service_role key, **server only, never commit** |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` or `NEXT_PUBLIC_SUPABASE_ANON_KEY` | browser-safe public key |
+| `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY` | server-only privileged key, **never commit** |
 | `RESEND_API_KEY` | from step 2 |
 | `RESEND_FROM` | `Be The Good UWO <sponsors@yourdomain.ca>` |
 | `RESEND_REPLY_TO` | where replies should land |

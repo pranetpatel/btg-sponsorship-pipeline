@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { getSupabaseEnv } from "@/lib/supabase/env";
 
 /**
  * Server-only client using the service-role key. Bypasses RLS, so it must
@@ -8,17 +9,16 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 let cached: SupabaseClient | null = null;
 
 export function supabaseAdmin(): SupabaseClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const { url, serviceRoleKey } = getSupabaseEnv();
 
-  if (!url || !key) {
+  if (!url || !serviceRoleKey) {
     throw new Error(
-      "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local",
+      "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL plus either SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY in .env.local",
     );
   }
 
   if (!cached) {
-    cached = createClient(url, key, {
+    cached = createClient(url, serviceRoleKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
   }
@@ -26,8 +26,6 @@ export function supabaseAdmin(): SupabaseClient {
 }
 
 export function supabaseConfigured() {
-  return Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL &&
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
-  );
+  const { url, serviceRoleKey } = getSupabaseEnv();
+  return Boolean(url && serviceRoleKey);
 }
