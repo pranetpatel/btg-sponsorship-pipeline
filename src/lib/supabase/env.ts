@@ -14,6 +14,8 @@ export function getSupabaseEnv(): SupabaseEnv {
     url: process.env.NEXT_PUBLIC_SUPABASE_URL,
     publishableKey:
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+      // Common dashboard typo fallback seen in manual env entry.
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISAHBLE_KEY ??
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     serviceRoleKey:
       process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY,
