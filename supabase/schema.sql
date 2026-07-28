@@ -98,6 +98,11 @@ create table if not exists public.lead_pool (
   notes        text,
   -- When the email crawler last visited the website, so it is not redone.
   website_checked_at timestamptz,
+  -- When we last opened this lead's own page on the source site to pick up
+  -- details the listing pages omit. Only the Chamber needs this: its member
+  -- websites live one click deeper, and a cron run can only get through part
+  -- of the roster at a time, so each run has to know where to resume.
+  detail_checked_at timestamptz,
   -- When this lead was copied onto the board. Null means still available.
   imported_at  timestamptz,
   created_at   timestamptz not null default now(),
@@ -112,6 +117,12 @@ create index if not exists lead_pool_available_idx
   on public.lead_pool (imported_at, scope, category);
 create index if not exists lead_pool_uncrawled_idx
   on public.lead_pool (website_checked_at) where email is null and website is not null;
+create index if not exists lead_pool_undetailed_idx
+  on public.lead_pool (source, detail_checked_at) where website is null;
+
+-- Added after the first release; harmless on a fresh install.
+alter table public.lead_pool
+  add column if not exists detail_checked_at timestamptz;
 
 -- ─────────────────────────────────────────────────────────────
 -- email_templates

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Globe, Upload } from "lucide-react";
+import { Download, Globe, RefreshCw, Upload } from "lucide-react";
 import Modal from "./Modal";
 import {
   CONTACT_RULES,
@@ -79,6 +79,29 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
     remaining: number;
     empty?: boolean;
   } | null>(null);
+
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshResult, setRefreshResult] = useState<{
+    stages: { stage: string; detail: string }[];
+    ranOutOfTime: boolean;
+    stats: { total: number; local: number; withEmail: number };
+  } | null>(null);
+
+  async function refreshPool() {
+    setRefreshing(true);
+    setError(null);
+    setRefreshResult(null);
+    try {
+      const res = await fetch("/api/leads/refresh", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not refresh the pool");
+      setRefreshResult(data);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   function toggleIn<T>(set: Set<T>, apply: (s: Set<T>) => void, value: T) {
     const next = new Set(set);
@@ -278,10 +301,8 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
 
       {result?.empty && (
         <div className="rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
-          Nothing left in the pool matching those filters. Loosen them, or ask
-          whoever runs the pipeline to refresh the pool with{" "}
-          <code className="rounded bg-amber-100 px-1">npm run leads:refresh</code>
-          .
+          Nothing left in the pool matching those filters. Try loosening them,
+          or refresh the pool below to go looking for more.
         </div>
       )}
 
@@ -310,6 +331,43 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
         <Globe size={15} />
         {busy ? "Adding" : "Add leads from the pool"}
       </button>
+
+      <div className="space-y-2 border-t border-cream-dark pt-4">
+        {refreshResult && (
+          <div className="space-y-1 rounded-lg bg-cream-dark/50 px-3 py-2.5 text-sm text-purple-900/75">
+            {refreshResult.stages.map((s) => (
+              <p key={s.stage}>
+                <span className="font-medium text-purple-800">
+                  {s.stage.replace(/_/g, " ")}
+                </span>{" "}
+                — {s.detail}
+              </p>
+            ))}
+            <p className="pt-1 text-xs text-purple-900/55">
+              Pool now holds {refreshResult.stats.total.toLocaleString()} leads,{" "}
+              {refreshResult.stats.local.toLocaleString()} independent,{" "}
+              {refreshResult.stats.withEmail.toLocaleString()} with an email.
+              {refreshResult.ranOutOfTime
+                ? " There was more to do than fits in one run — it picks up where it left off, so run it again or let tonight's scheduled refresh continue."
+                : ""}
+            </p>
+          </div>
+        )}
+
+        <button
+          onClick={refreshPool}
+          disabled={refreshing}
+          className="btg-btn-ghost w-full"
+        >
+          <RefreshCw size={15} className={refreshing ? "animate-spin" : ""} />
+          {refreshing ? "Looking for new leads" : "Refresh the pool"}
+        </button>
+        <p className="text-center text-xs text-purple-900/45">
+          Re-reads the BIA and Chamber directories and hunts for more emails.
+          Runs automatically overnight, so you rarely need this. Takes a few
+          minutes.
+        </p>
+      </div>
     </div>
   );
 }

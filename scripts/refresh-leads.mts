@@ -1,22 +1,24 @@
 /**
- * Lead discovery, run offline.
+ * Lead discovery, run from a terminal.
  *
- *   npm run leads:refresh                  every source, then crawl for emails
- *   npm run leads:refresh -- --source=overture
+ *   npm run leads:refresh                  Overture, then everything the
+ *                                          nightly cron also does
+ *   npm run leads:refresh -- --source=overture   just the heavy one
  *   npm run leads:refresh -- --no-crawl    skip the website email crawl
  *   npm run leads:refresh -- --crawl-only  only crawl, discover nothing new
- *   npm run leads:refresh -- --max-crawl=500
  *   npm run leads:refresh -- --dry-run     report what each source returns,
  *                                          write nothing, touch no database
  *
- * This used to happen inside the "Add sponsors" request, which capped a run
- * at whatever fit in 300 seconds. Pulling it out here means a refresh can
- * take half an hour if it wants to, and the app just reads the results.
- * Expect to run it monthly — Overture publishes about that often, and
- * directories change slowly.
+ * Most of this also runs on its own: a Vercel cron hits /api/leads/refresh
+ * every night and works through the directories and the email crawl a slice
+ * at a time. The one thing that cannot run there is Overture, which moves
+ * gigabytes of Parquet and takes about ten minutes — far past a function's
+ * limit. So this script exists mainly for Overture, and running it maybe
+ * once or twice a year is enough; the cron keeps the rest current.
  *
  * Needs the same environment as the app (NEXT_PUBLIC_SUPABASE_URL and the
- * service-role key); it loads .env.local the way Next.js does.
+ * service-role key); it loads .env.local the way Next.js does. Point that at
+ * production if you want to fill the deployed pool.
  */
 // @next/env is CommonJS, so it has no named ESM exports to destructure.
 import nextEnv from "@next/env";
@@ -28,10 +30,18 @@ const { fetchOvertureLeads, latestOvertureRelease, overturePlaceKey } =
 const { fetchDowntownLondonLeads } = await import(
   "@/lib/leads/downtown-london"
 );
-const { fetchLondonChamberLeads } = await import("@/lib/leads/london-chamber");
+const { fetchChamberRoster, fetchChamberWebsites } = await import(
+  "@/lib/leads/london-chamber"
+);
 const { countByName, toPooledLead } = await import("@/lib/leads/types");
-const { upsertLeads, listUncrawled, crawlPooledEmails, poolStats } =
-  await import("@/lib/leads/store");
+const {
+  upsertLeads,
+  listUncrawled,
+  listUndetailed,
+  recordDetails,
+  crawlPooledEmails,
+  poolStats,
+} = await import("@/lib/leads/store");
 
 type SourceName = "overture" | "downtown_london" | "london_chamber";
 
@@ -83,11 +93,17 @@ async function runSource(name: SourceName, release?: string) {
     }
     case "downtown_london": {
       const leads = await fetchDowntownLondonLeads((m) => log(`  .. ${m}`));
-      return { leads, placeKey: (l: (typeof leads)[number]) => l.location ?? l.sourceRef };
+      return {
+        leads,
+        placeKey: (l: (typeof leads)[number]) => l.location ?? l.sourceRef,
+      };
     }
     case "london_chamber": {
-      const leads = await fetchLondonChamberLeads((m) => log(`  .. ${m}`));
-      return { leads, placeKey: (l: (typeof leads)[number]) => l.location ?? l.sourceRef };
+      const leads = await fetchChamberRoster((m) => log(`  .. ${m}`));
+      return {
+        leads,
+        placeKey: (l: (typeof leads)[number]) => l.location ?? l.sourceRef,
+      };
     }
   }
 }
@@ -152,6 +168,23 @@ async function main() {
         // One bad source should not cost us the other two.
         log(`  FAILED: ${(err as Error).message}`);
       }
+    }
+  }
+
+  // Chamber websites live one click past the listing pages. No deadline
+  // here, unlike the cron — a terminal can afford to finish the job.
+  if (!args.dryRun && !args.crawlOnly && args.sources.includes("london_chamber")) {
+    step("chamber member pages");
+    const pending = await listUndetailed("london_chamber", 5000);
+    log(`  ${pending.length} members whose page we have not opened`);
+    if (pending.length) {
+      const results = await fetchChamberWebsites(
+        pending.map((p) => p.source_ref),
+        { deadlineMs: 45 * 60_000 },
+        log,
+      );
+      await recordDetails("london_chamber", results);
+      log(`  found ${results.filter((r) => r.website).length} websites`);
     }
   }
 

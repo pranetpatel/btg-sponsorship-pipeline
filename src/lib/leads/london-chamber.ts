@@ -138,11 +138,19 @@ function parseCards(
   return members;
 }
 
-export async function fetchLondonChamberLeads(
+/**
+ * The roster: every member, with everything the listing pages publish.
+ *
+ * Deliberately stops short of opening each member's own page, because that
+ * is 900-odd extra requests and will not fit in one serverless invocation.
+ * Websites are filled in afterwards by fetchChamberWebsites, a batch at a
+ * time, which is why the two halves are separate functions.
+ */
+export async function fetchChamberRoster(
   onProgress?: (message: string) => void,
   options: { concurrency?: number; maxMembers?: number } = {},
 ): Promise<DiscoveredLead[]> {
-  const { concurrency = 6, maxMembers = 2000 } = options;
+  const { concurrency = 6, maxMembers = 5000 } = options;
 
   onProgress?.("fetching the Chamber directory index");
   const index = await loadHtml(LIST_URL, 40_000);
@@ -198,27 +206,17 @@ export async function fetchLondonChamberLeads(
   }
 
   const members = [...byMember.values()].slice(0, maxMembers);
-  onProgress?.(`found ${members.length} Chamber members, fetching websites`);
+  onProgress?.(`found ${members.length} Chamber members`);
 
-  let done = 0;
-  const websites = await pool(members, concurrency, async (member) => {
-    const $ = await loadHtml(`${BASE}/list/member/${member.slug}`);
-    done += 1;
-    if (done % 200 === 0) onProgress?.(`  ${done}/${members.length} members`);
-    if (!$) return null;
-
-    const href = $("li.gz-card-website a[href]").first().attr("href");
-    return href?.trim() || null;
-  });
-
-  return members.map((member, i) => ({
+  return members.map((member) => ({
     source: "london_chamber" as const,
     sourceRef: member.slug,
     name: member.name,
     // GrowthZone keeps member emails behind a contact form.
     email: null,
     phone: member.phone,
-    website: websites[i],
+    // Filled in later, one member page at a time.
+    website: null,
     location: member.location,
     category: categorize(member.categorySlug),
     industry: prettyCategory(member.categorySlug),
@@ -226,4 +224,46 @@ export async function fetchLondonChamberLeads(
     brand: null,
     notes: "London Chamber of Commerce member.",
   }));
+}
+
+/**
+ * Opens individual member pages to pick up their websites.
+ *
+ * Returns an entry for every slug asked about, website or not, so the caller
+ * can mark all of them as checked — otherwise the members who genuinely have
+ * no website would be re-fetched on every single run, forever.
+ */
+export async function fetchChamberWebsites(
+  slugs: string[],
+  options: { concurrency?: number; deadlineMs?: number } = {},
+  onProgress?: (message: string) => void,
+): Promise<{ slug: string; website: string | null }[]> {
+  const { concurrency = 6, deadlineMs = 120_000 } = options;
+  if (!slugs.length) return [];
+
+  const stopAt = Date.now() + deadlineMs;
+  const done: { slug: string; website: string | null }[] = [];
+  let next = 0;
+
+  async function worker() {
+    while (true) {
+      const i = next++;
+      if (i >= slugs.length || Date.now() > stopAt) return;
+
+      const slug = slugs[i];
+      const $ = await loadHtml(`${BASE}/list/member/${slug}`, 15_000);
+      const href = $?.("li.gz-card-website a[href]").first().attr("href");
+
+      done.push({ slug, website: href?.trim() || null });
+      if (done.length % 100 === 0) {
+        onProgress?.(`  ${done.length}/${slugs.length} member pages`);
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, slugs.length) }, worker),
+  );
+
+  return done;
 }

@@ -136,6 +136,68 @@ export async function crawlPooledEmails(
   return { found, checked };
 }
 
+/**
+ * Chamber members whose own page has not been opened yet.
+ *
+ * Ordered oldest-first so a cron run that only gets through part of the
+ * roster picks up where the last one stopped instead of restarting.
+ */
+export async function listUndetailed(
+  source: string,
+  limit: number,
+): Promise<{ id: string; source_ref: string }[]> {
+  const db = supabaseAdmin();
+  const { data, error } = await db
+    .from("lead_pool")
+    .select("id, source_ref")
+    .eq("source", source)
+    .is("website", null)
+    .is("detail_checked_at", null)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as { id: string; source_ref: string }[];
+}
+
+/**
+ * Writes back the websites a detail pass found.
+ *
+ * Every slug handed in gets stamped, including the ones with no website, so
+ * they drop out of listUndetailed and the next run moves on.
+ */
+export async function recordDetails(
+  source: string,
+  results: { slug: string; website: string | null }[],
+) {
+  if (!results.length) return;
+  const db = supabaseAdmin();
+  const now = new Date().toISOString();
+
+  const withSite = results.filter((r) => r.website);
+  // One statement per distinct website, but a single statement for the much
+  // larger group that had none.
+  await Promise.all(
+    withSite.map((r) =>
+      db
+        .from("lead_pool")
+        .update({ website: r.website, detail_checked_at: now })
+        .eq("source", source)
+        .eq("source_ref", r.slug),
+    ),
+  );
+
+  const withoutSite = results.filter((r) => !r.website).map((r) => r.slug);
+  if (withoutSite.length) {
+    const { error } = await db
+      .from("lead_pool")
+      .update({ detail_checked_at: now })
+      .eq("source", source)
+      .in("source_ref", withoutSite);
+    if (error) throw new Error(error.message);
+  }
+}
+
 export type PoolStats = {
   total: number;
   local: number;

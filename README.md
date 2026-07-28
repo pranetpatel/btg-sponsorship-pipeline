@@ -86,18 +86,37 @@ password. If a key is missing the app tells you which one instead of breaking.
 
 ### Lead discovery
 
-Discovery runs **offline**, as a job, and fills a `lead_pool` table. "Add
-sponsors" in the app is then just a filtered read of that table, which answers
-instantly instead of spending five minutes on live API calls.
+Discovery fills a `lead_pool` table. "Add sponsors" in the app is then just a
+filtered read of that table, which answers instantly instead of spending five
+minutes on live API calls.
+
+Most of it keeps itself current. **A nightly Vercel cron** hits
+`/api/leads/refresh`, which re-reads the two directories and crawls websites
+for email addresses. It works a slice at a time — the Chamber alone is 900-odd
+member pages — and each run resumes where the last one stopped, so the first
+few nights clear the backlog and after that it just tracks what changed. There
+is a **Refresh the pool** button in *Add sponsors* that runs the same thing on
+demand.
+
+The cron needs `CRON_SECRET` set in the Vercel project. Without it the
+scheduled run is refused rather than left open to the internet; the button
+still works.
+
+**Overture is the exception** and stays a local job. It moves gigabytes of
+Parquet through DuckDB and takes about ten minutes, which no serverless
+function will do:
 
 ```bash
-npm run leads:refresh                 # every source, then crawl for emails
-npm run leads:refresh -- --dry-run    # report what each source has, write nothing
-npm run leads:refresh -- --source=downtown_london
-npm run leads:refresh -- --crawl-only # just hunt for emails on known websites
+npm run leads:refresh                       # Overture + everything else
+npm run leads:refresh -- --source=overture  # just the heavy one
+npm run leads:refresh -- --dry-run          # report only, write nothing
+npm run leads:refresh -- --crawl-only       # only hunt for emails
 ```
 
-Run it about monthly. It takes roughly 20-40 minutes, mostly the email crawl.
+Point `.env.local` at production and run it once to fill the deployed pool.
+After that, once or twice a year is plenty — Overture publishes monthly, but
+London's business list does not turn over that fast, and the cron handles
+everything else.
 
 Three sources, all open data or public directories:
 
@@ -215,6 +234,25 @@ detected automatically if you leave it blank.
 
 Change `TEAM_PASSWORD` from whatever you used locally before you share the URL.
 
+Set `CRON_SECRET` to any long random string. `vercel.ts` schedules a nightly
+run of `/api/leads/refresh`, and that secret is what proves the request came
+from Vercel's scheduler:
+
+```bash
+vercel env add CRON_SECRET
+```
+
+Hobby projects get one cron job running once a day, which is exactly what this
+uses. Nothing breaks if you skip it — the pool just only refreshes when
+somebody presses **Refresh the pool** in the app.
+
+Finally, fill the pool once from your machine, since Overture cannot run on a
+function. Copy the production Supabase values into `.env.local` and:
+
+```bash
+npm run leads:refresh
+```
+
 ---
 
 ## Sending responsibly
@@ -264,6 +302,7 @@ src/
   lib/
     chains.ts             chain vs. independent screening
     leads/
+      refresh.ts          the stages the cron runs, deadline-bounded
       overture.ts         Overture Maps, via DuckDB
       downtown-london.ts  BIA directory
       london-chamber.ts   Chamber member directory
@@ -271,8 +310,10 @@ src/
       store.ts            lead_pool reads and writes
     email.ts              personalization, tracked HTML
     session.ts            team gate
+      leads/refresh/      nightly pool refresh, cron + in-app button
 scripts/
-  refresh-leads.mts       the offline discovery job
+  refresh-leads.mts       the local discovery job, incl. Overture
+vercel.ts                 deployment config and the cron schedule
 supabase/schema.sql       run this once
 ```
 
