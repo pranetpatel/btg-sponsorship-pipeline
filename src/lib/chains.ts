@@ -136,30 +136,30 @@ export type ChainVerdict =
   | { chain: false; locations: 1 };
 
 /**
+ * What a data source can tell us about a place belonging to a wider brand.
+ * Kept deliberately small so every source can fill it in.
+ */
+export type ChainSignals = {
+  /** Brand name the source attached to this place, if it publishes one. */
+  brand?: string | null;
+};
+
+/**
  * @param locations how many distinct addresses in the search area share this
  *   name. One means we only ever saw it once.
  */
 export function classifyLead(
   name: string,
-  tags: Record<string, string>,
+  signals: ChainSignals,
   locations: number,
 ): ChainVerdict {
-  const brandTag = tags.brand?.trim();
-  if (brandTag) {
+  const brand = signals.brand?.trim();
+  if (brand) {
     return {
       chain: true,
-      brand: brandTag,
+      brand,
       locations,
-      reason: "tagged with a brand in OpenStreetMap",
-    };
-  }
-
-  if (tags["brand:wikidata"]) {
-    return {
-      chain: true,
-      brand: name,
-      locations,
-      reason: "linked to a national brand in OpenStreetMap",
+      reason: "the data source lists it under a brand",
     };
   }
 

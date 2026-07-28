@@ -15,7 +15,9 @@ email). Nothing here costs money at the volumes a student club sends.
 1. Go to [supabase.com](https://supabase.com), create a project. Free tier.
 2. Open the **SQL Editor**, paste in everything from
    [supabase/schema.sql](supabase/schema.sql), hit run. That creates the
-   tables, the realtime setup, and the five email templates.
+   tables, the realtime setup, and the five email templates. The file is
+   idempotent — if you set the project up before and something looks off,
+   paste it in again.
 3. Go to **Project Settings → API** and copy three values:
    - Project URL
    - `publishable` key (or legacy `anon` key)
@@ -84,28 +86,61 @@ password. If a key is missing the app tells you which one instead of breaking.
 
 ### Lead discovery
 
-Pulls from the **OpenStreetMap Overpass API**: open data, no API key, and no
-terms-of-service problem the way scraping Google or Yellow Pages would be.
+Discovery runs **offline**, as a job, and fills a `lead_pool` table. "Add
+sponsors" in the app is then just a filtered read of that table, which answers
+instantly instead of spending five minutes on live API calls.
 
-Set expectations here. Measured against the live API for London, Ontario, a
-250-result pull came back with:
+```bash
+npm run leads:refresh                 # every source, then crawl for emails
+npm run leads:refresh -- --dry-run    # report what each source has, write nothing
+npm run leads:refresh -- --source=downtown_london
+npm run leads:refresh -- --crawl-only # just hunt for emails on known websites
+```
 
-- essentially all with a name and address
-- about **23%** with a website
-- about **23%** with a phone number
-- only about **2%** with an email listed directly
+Run it about monthly. It takes roughly 20-40 minutes, mostly the email crawl.
 
-So the scraper does a second pass: for any lead with a website but no email, it
-fetches the homepage and `/contact` and pulls the first real address it finds,
-preferring `info@` or `hello@` over a personal inbox. That is where most of the
-usable emails come from. Leave the checkbox on.
+Three sources, all open data or public directories:
+
+| Source | Leads | Email | Phone | Website |
+|---|---|---|---|---|
+| Overture Maps | 7,894 | 50% | 94% | 85% |
+| Downtown London BIA | 996 | 28% | 89% | 85% |
+| London Chamber of Commerce | 945 | — | 95% | 85% |
+
+**Overture Maps** is the bulk source: Meta, Microsoft, and Foursquare pooling
+their business listings under permissive licences. It is bulk Parquet on S3
+rather than an API, read with DuckDB — which is the main reason discovery
+cannot live inside a web request.
+
+**Downtown London BIA** and the **Chamber of Commerce** are curated member
+directories. Smaller, but a BIA directory is independent local operators by
+construction, and a Chamber member is a business that pays annual dues, which
+is a decent proxy for having a marketing budget.
+
+The Chamber publishes no member emails — contact goes through a form — so it
+contributes names, phones, and websites, and the crawler does the rest.
+
+#### Screening
+
+Every lead is tagged `local` or `chain`, because a branch manager at TD or
+Metro cannot approve a sponsorship. The signals are the source's own brand
+field, a hand-kept list of chains common around London, and the same name
+appearing at several addresses. "Independent businesses only" is on by default.
+
+#### Finding emails
+
+Most sources are thinner on emails than on websites, so the refresh job crawls
+every pooled website that has no email yet: homepage first, then contact and
+about pages it finds in the nav. It prefers `info@` over a personal inbox, and
+prefers an address on the site's own domain — otherwise a footer credit like
+`jade@somewebdesigner.ca` gets saved as the restaurant's contact. Roughly one
+site in three yields an address.
+
+Rows are stamped `website_checked_at` whether or not anything was found, so
+repeat runs move on to new leads rather than retrying dead sites.
 
 Expect to fill some gaps by hand or by phone. That is the nature of the data,
 not a bug in the tool.
-
-Overpass rate limits per IP, roughly two quick requests before it starts
-refusing for about a minute. One "Find leads" run is one request, so normal use
-is fine. If you get the rate limit message, wait a minute.
 
 ### Email tracking
 
@@ -214,7 +249,7 @@ src/
       outreach/send/      the send engine, dry-run preview supported
       track/open|click/   tracking pixel and click redirect
       import/             CSV upload
-      scrape/             lead discovery
+      scrape/             pulls leads off lead_pool onto the board
       templates/          template CRUD
       export/             CSV export
       webhooks/resend/    bounce and complaint handling
@@ -223,20 +258,29 @@ src/
     KanbanBoard.tsx       drag and drop columns
     SponsorTable.tsx      sortable table
     EmailComposer.tsx     template pick, edit, preview, send
-    ImportPanel.tsx       scrape / CSV / manual
+    ImportPanel.tsx       lead pool / CSV / manual
     SponsorDrawer.tsx     detail edit and contact history
     usePipeline.ts        data and realtime
   lib/
-    scraper.ts            Overpass query, classification, email discovery
+    chains.ts             chain vs. independent screening
+    leads/
+      overture.ts         Overture Maps, via DuckDB
+      downtown-london.ts  BIA directory
+      london-chamber.ts   Chamber member directory
+      emails.ts           finds a contact address on a business website
+      store.ts            lead_pool reads and writes
     email.ts              personalization, tracked HTML
     session.ts            team gate
+scripts/
+  refresh-leads.mts       the offline discovery job
 supabase/schema.sql       run this once
 ```
 
 ## Commands
 
 ```bash
-npm run dev     # local
-npm run build   # production build
-npx eslint .    # lint
+npm run dev            # local
+npm run build          # production build
+npm run leads:refresh  # refill the lead pool (see Lead discovery)
+npx eslint .           # lint
 ```

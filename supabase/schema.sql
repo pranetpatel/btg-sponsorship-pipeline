@@ -31,14 +31,87 @@ create table if not exists public.sponsors (
     check (category in ('corporate','small_business','nonprofit','supplier','alumni','other'))
 );
 
--- One row per business email. Lets CSV import and the scraper upsert
--- without creating duplicates. Rows with a null email are never deduped.
-create unique index if not exists sponsors_email_unique
-  on public.sponsors (lower(email)) where email is not null;
+-- One row per business email. Lets CSV import and the scraper upsert without
+-- creating duplicates. Rows with a null email are never deduped, because
+-- Postgres treats nulls as distinct in a unique constraint.
+--
+-- This has to be a plain unique constraint on the raw column. PostgREST's
+-- upsert sends `on conflict (email)`, and Postgres only infers an arbiter
+-- index whose definition matches exactly — an index on lower(email), or a
+-- partial index with a where clause, matches nothing and every upsert dies
+-- with "there is no unique or exclusion constraint matching the ON CONFLICT
+-- specification". Case folding happens in normalizeSponsorInput and the
+-- scraper before a row ever reaches the database, so lower() here bought
+-- nothing anyway.
+drop index if exists public.sponsors_email_unique;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.sponsors'::regclass
+      and conname = 'sponsors_email_key'
+  ) then
+    alter table public.sponsors
+      add constraint sponsors_email_key unique (email);
+  end if;
+end $$;
 
 create index if not exists sponsors_status_idx   on public.sponsors (status);
 create index if not exists sponsors_category_idx on public.sponsors (category);
 create index if not exists sponsors_created_idx  on public.sponsors (created_at desc);
+
+-- ─────────────────────────────────────────────────────────────
+-- lead_pool — everything we have discovered, before anyone
+-- decides to work it
+--
+-- Lead discovery used to happen inside the request that added
+-- sponsors: hit an API, crawl websites, insert. That capped a run
+-- at whatever fit in 300 seconds and re-did the same work daily.
+--
+-- Now discovery is a job that runs offline (npm run leads:refresh)
+-- and fills this table, and "Add sponsors" is a query against it.
+-- Rows here are candidates, not part of the pipeline; copying one
+-- into sponsors is what puts it on the board, and imported_at
+-- records that so nobody gets offered the same lead twice.
+-- ─────────────────────────────────────────────────────────────
+create table if not exists public.lead_pool (
+  id           uuid primary key default gen_random_uuid(),
+  source       text not null,
+  -- Stable id from that source, so a refresh updates rather than duplicates.
+  source_ref   text not null,
+  name         text not null,
+  -- Normalized name, for spotting the same business across two sources.
+  name_key     text not null,
+  email        text,
+  phone        text,
+  website      text,
+  location     text,
+  category     text not null default 'small_business',
+  industry     text,
+  -- Chain screening verdict. 'unknown' means nothing has classified it yet.
+  scope        text not null default 'unknown',
+  brand        text,
+  locations    integer not null default 1,
+  -- The source's own confidence in the record, where it publishes one.
+  confidence   numeric,
+  notes        text,
+  -- When the email crawler last visited the website, so it is not redone.
+  website_checked_at timestamptz,
+  -- When this lead was copied onto the board. Null means still available.
+  imported_at  timestamptz,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  constraint lead_pool_scope_check check (scope in ('local','chain','unknown'))
+);
+
+create unique index if not exists lead_pool_source_ref_unique
+  on public.lead_pool (source, source_ref);
+create index if not exists lead_pool_name_key_idx on public.lead_pool (name_key);
+create index if not exists lead_pool_available_idx
+  on public.lead_pool (imported_at, scope, category);
+create index if not exists lead_pool_uncrawled_idx
+  on public.lead_pool (website_checked_at) where email is null and website is not null;
 
 -- ─────────────────────────────────────────────────────────────
 -- email_templates
@@ -134,6 +207,10 @@ drop trigger if exists templates_touch on public.email_templates;
 create trigger templates_touch before update on public.email_templates
   for each row execute function public.touch_updated_at();
 
+drop trigger if exists lead_pool_touch on public.lead_pool;
+create trigger lead_pool_touch before update on public.lead_pool
+  for each row execute function public.touch_updated_at();
+
 -- ─────────────────────────────────────────────────────────────
 -- Realtime — the dashboard subscribes to these
 -- ─────────────────────────────────────────────────────────────
@@ -168,6 +245,9 @@ alter table public.outreach_logs  enable row level security;
 alter table public.email_templates enable row level security;
 alter table public.activity_log   enable row level security;
 alter table public.team_access    enable row level security;
+-- No anon read policy for lead_pool: raw discovery output is only ever
+-- touched server-side by the refresh job and the import route.
+alter table public.lead_pool      enable row level security;
 
 drop policy if exists "anon read sponsors" on public.sponsors;
 create policy "anon read sponsors" on public.sponsors for select using (true);

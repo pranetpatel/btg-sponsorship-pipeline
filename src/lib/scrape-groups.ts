@@ -1,45 +1,13 @@
 /**
- * Client-safe half of the scraper config. Lives apart from scraper.ts so the
- * import panel can render the options without pulling cheerio into the
- * browser bundle.
+ * Client-safe options for the "Add sponsors" panel. Kept apart from the
+ * lead modules so the browser bundle never pulls in cheerio or DuckDB.
  */
-export type ScrapeGroup =
-  | "local_business"
-  | "corporate"
-  | "nonprofit"
-  | "supplier";
-
-export const SCRAPE_GROUPS: {
-  value: ScrapeGroup;
-  label: string;
-  hint: string;
-}[] = [
-  {
-    value: "local_business",
-    label: "Local businesses",
-    hint: "Cafes, restaurants, shops, gyms",
-  },
-  {
-    value: "corporate",
-    label: "Corporate",
-    hint: "Offices, banks, professional services",
-  },
-  {
-    value: "nonprofit",
-    label: "Nonprofits",
-    hint: "Charities, community centres, faith groups",
-  },
-  {
-    value: "supplier",
-    label: "Suppliers",
-    hint: "Grocers, pharmacies, wholesale",
-  },
-];
 
 /**
  * The bar a lead has to clear on contact info before it is worth a card on
- * the board. Anything below the bar is dropped at import rather than saved,
- * because a row with no email and no phone is just noise to scroll past.
+ * the board. Anything below the bar stays in the pool rather than being
+ * imported, because a row with no email and no phone is just noise to
+ * scroll past.
  */
 export type ContactRule = "email" | "email_or_phone" | "any";
 
@@ -62,5 +30,64 @@ export const CONTACT_RULES: {
     value: "any",
     label: "Keep everything",
     hint: "Includes leads you'd have to look up yourself",
+  },
+];
+
+/** Sponsor categories offered as filters when drawing from the pool. */
+export type LeadCategory =
+  | "small_business"
+  | "corporate"
+  | "nonprofit"
+  | "supplier";
+
+export const LEAD_CATEGORIES: {
+  value: LeadCategory;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "small_business",
+    label: "Local businesses",
+    hint: "Cafes, restaurants, shops, salons, gyms",
+  },
+  {
+    value: "corporate",
+    label: "Corporate",
+    hint: "Offices, banks, professional services",
+  },
+  {
+    value: "nonprofit",
+    label: "Nonprofits",
+    hint: "Charities, community groups, faith groups",
+  },
+  {
+    value: "supplier",
+    label: "Suppliers",
+    hint: "Grocers, pharmacies, wholesale",
+  },
+];
+
+/** Mirrors LEAD_SOURCES in src/lib/leads/types.ts, without the server code. */
+export type LeadSourceOption = "overture" | "downtown_london" | "london_chamber";
+
+export const LEAD_SOURCE_OPTIONS: {
+  value: LeadSourceOption;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "downtown_london",
+    label: "Downtown London BIA",
+    hint: "Curated downtown independents, most with an email",
+  },
+  {
+    value: "london_chamber",
+    label: "Chamber of Commerce",
+    hint: "Dues-paying members, so they have a budget",
+  },
+  {
+    value: "overture",
+    label: "Overture Maps",
+    hint: "Every business mapped in London, the widest net",
   },
 ];

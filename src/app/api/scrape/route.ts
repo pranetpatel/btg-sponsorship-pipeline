@@ -3,162 +3,198 @@ import { ok, fail, handleError } from "@/lib/api";
 import { requireTeam } from "@/lib/session";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { logActivity } from "@/lib/activity";
-import {
-  fetchOsmLeads,
-  enrichEmails,
-  type ScrapedLead,
-  type ScrapeGroup,
-} from "@/lib/scraper";
-import type { ContactRule } from "@/lib/scrape-groups";
+import type {
+  ContactRule,
+  LeadCategory,
+  LeadSourceOption,
+} from "@/lib/scrape-groups";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
 
 /**
- * Whatever is left of maxDuration once Overpass has had its turn, minus a
- * reserve for the inserts at the end. Overpass can spend minutes backing off
- * a rate limit, so the website crawl has to take what remains rather than
- * assume a fixed slice — otherwise a slow lead search kills the whole
- * request and the team gets nothing.
+ * Takes leads off lead_pool and puts them on the board.
+ *
+ * There is no discovery here any more. Finding businesses, screening chains,
+ * and crawling websites for email addresses all happen in the offline
+ * refresh job (npm run leads:refresh), so this route is a filtered read of
+ * a table the team already owns — it answers in milliseconds instead of
+ * spending five minutes on live API calls that might get rate limited.
  */
-const REQUEST_BUDGET_MS = 285_000;
-const INSERT_RESERVE_MS = 25_000;
 
-/** Does this lead clear the bar the team set for contact info? */
-function reachable(lead: ScrapedLead, rule: ContactRule) {
-  if (rule === "any") return true;
-  if (rule === "email") return Boolean(lead.email);
-  return Boolean(lead.email || lead.phone);
-}
+type PoolRow = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  location: string | null;
+  category: string;
+  industry: string | null;
+  scope: string;
+  brand: string | null;
+  locations: number;
+  source: string;
+  notes: string | null;
+};
 
 export async function POST(req: NextRequest) {
   try {
-    const startedAt = Date.now();
     const member = await requireTeam();
     const {
-      groups = ["local_business"],
+      categories = ["small_business"],
+      sources,
       limit = 60,
-      findEmails = true,
       localOnly = true,
       contactRule = "email_or_phone",
     } = (await req.json()) as {
-      groups?: ScrapeGroup[];
+      categories?: LeadCategory[];
+      sources?: LeadSourceOption[];
       limit?: number;
-      findEmails?: boolean;
       localOnly?: boolean;
       contactRule?: ContactRule;
     };
 
-    if (!groups.length) return fail("Pick at least one lead type");
+    if (!categories.length) return fail("Pick at least one kind of business");
     const cap = Math.min(Math.max(Number(limit) || 60, 1), 200);
-
-    // Pull a much wider net than the team asked for, because most of it gets
-    // thrown away. Measured over 388 London businesses in OpenStreetMap:
-    // about a third are chain locations, and 77% carry no contact details of
-    // any kind. Roughly five candidates go in for every usable lead that
-    // comes out. The list is trimmed back to `cap` below.
-    const pool = Math.min(Math.max(cap * 5, 100), 400);
-    const { leads: candidates, scanned, chainsSkipped } = await fetchOsmLeads(
-      groups,
-      pool,
-      { localOnly },
-    );
-
-    if (!candidates.length) {
-      return ok({
-        scanned,
-        chainsSkipped,
-        found: 0,
-        imported: 0,
-        skipped: 0,
-        emailsFound: 0,
-        noContactSkipped: 0,
-        withEmail: 0,
-      });
-    }
-
-    const crawlBudget =
-      REQUEST_BUDGET_MS - (Date.now() - startedAt) - INSERT_RESERVE_MS;
-    const emailsFound = findEmails
-      ? (await enrichEmails(candidates, { deadlineMs: crawlBudget })).found
-      : 0;
-
-    const reachableLeads = candidates.filter((l) => reachable(l, contactRule));
-    const noContactSkipped = candidates.length - reachableLeads.length;
-    const leads = reachableLeads.slice(0, cap);
 
     const db = supabaseAdmin();
 
-    // Rows without an email cannot use the unique-email upsert, so they are
-    // inserted separately after checking for a same-name duplicate.
-    const withEmail = leads.filter((l) => l.email);
-    const withoutEmail = leads.filter((l) => !l.email);
+    let query = db
+      .from("lead_pool")
+      .select(
+        "id, name, email, phone, website, location, category, industry, scope, brand, locations, source, notes",
+      )
+      .is("imported_at", null)
+      .in("category", categories);
+
+    if (sources?.length) query = query.in("source", sources);
+    if (localOnly) query = query.eq("scope", "local");
+    if (contactRule === "email") query = query.not("email", "is", null);
+    if (contactRule === "email_or_phone") {
+      query = query.or("email.not.is.null,phone.not.is.null");
+    }
+
+    // Leads with an email first, then the ones with only a phone: if the cap
+    // cuts the list short, the team should get the ones they can act on.
+    const { data, error } = await query
+      .order("email", { ascending: true, nullsFirst: false })
+      .order("name", { ascending: true })
+      .limit(cap);
+
+    if (error) throw new Error(error.message);
+
+    const leads = (data ?? []) as PoolRow[];
+    if (!leads.length) {
+      return ok({
+        imported: 0,
+        skipped: 0,
+        withEmail: 0,
+        remaining: await countAvailable(db, categories, sources, localOnly),
+        empty: true,
+      });
+    }
+
+    // A lead can already be on the board from a CSV or a previous run under
+    // a different source, so match on both email and name before inserting.
+    const emails = leads.map((l) => l.email).filter(Boolean) as string[];
+    const names = leads.map((l) => l.name);
+
+    const [{ data: byEmail }, { data: byName }] = await Promise.all([
+      emails.length
+        ? db.from("sponsors").select("email").in("email", emails)
+        : Promise.resolve({ data: [] as { email: string | null }[] }),
+      db.from("sponsors").select("name").in("name", names),
+    ]);
+
+    const takenEmails = new Set(
+      (byEmail ?? []).map((r) => r.email?.toLowerCase()).filter(Boolean),
+    );
+    const takenNames = new Set(
+      (byName ?? []).map((r) => r.name.toLowerCase()),
+    );
+
+    const fresh = leads.filter(
+      (l) =>
+        !(l.email && takenEmails.has(l.email.toLowerCase())) &&
+        !takenNames.has(l.name.toLowerCase()),
+    );
+    const skipped = leads.length - fresh.length;
 
     let imported = 0;
-    let skipped = 0;
-
-    if (withEmail.length) {
-      const { data, error } = await db
+    if (fresh.length) {
+      const { data: inserted, error: insertError } = await db
         .from("sponsors")
-        .upsert(
-          withEmail.map((l) => ({ ...l, status: "new" })),
-          { onConflict: "email", ignoreDuplicates: true },
+        .insert(
+          fresh.map((l) => ({
+            name: l.name,
+            email: l.email,
+            phone: l.phone,
+            website: l.website,
+            location: l.location ?? "London, ON",
+            category: l.category,
+            industry: l.industry,
+            notes: l.notes,
+            source: l.source,
+            status: "new",
+            custom_fields:
+              l.scope === "chain"
+                ? {
+                    scope: "chain",
+                    brand: l.brand ?? "Chain",
+                    locations: String(l.locations),
+                  }
+                : { scope: "local", locations: "1" },
+          })),
         )
         .select("id");
-      if (error) throw new Error(error.message);
-      imported += data?.length ?? 0;
-      skipped += withEmail.length - (data?.length ?? 0);
+
+      if (insertError) throw new Error(insertError.message);
+      imported = inserted?.length ?? 0;
     }
 
-    if (withoutEmail.length) {
-      const names = withoutEmail.map((l) => l.name);
-      const { data: existing } = await db
-        .from("sponsors")
-        .select("name")
-        .in("name", names);
-      const taken = new Set((existing ?? []).map((r) => r.name.toLowerCase()));
-
-      const fresh = withoutEmail.filter((l) => !taken.has(l.name.toLowerCase()));
-      skipped += withoutEmail.length - fresh.length;
-
-      if (fresh.length) {
-        const { data, error } = await db
-          .from("sponsors")
-          .insert(fresh.map((l) => ({ ...l, status: "new" })))
-          .select("id");
-        if (error) throw new Error(error.message);
-        imported += data?.length ?? 0;
-      }
-    }
+    // Mark every lead we looked at, including duplicates: they are on the
+    // board one way or another, and re-offering them helps nobody.
+    await db
+      .from("lead_pool")
+      .update({ imported_at: new Date().toISOString() })
+      .in(
+        "id",
+        leads.map((l) => l.id),
+      );
 
     await logActivity({
       actor: member.name,
-      action: "leads.scraped",
-      detail: {
-        groups,
-        localOnly,
-        contactRule,
-        scanned,
-        chainsSkipped,
-        noContactSkipped,
-        found: leads.length,
-        imported,
-        skipped,
-        emailsFound,
-      },
+      action: "leads.imported",
+      detail: { categories, sources, localOnly, contactRule, imported, skipped },
     });
 
     return ok({
-      scanned,
-      chainsSkipped,
-      noContactSkipped,
-      found: leads.length,
       imported,
       skipped,
-      emailsFound,
-      withEmail: withEmail.length,
+      withEmail: fresh.filter((l) => l.email).length,
+      remaining: await countAvailable(db, categories, sources, localOnly),
     });
   } catch (err) {
     return handleError(err);
   }
+}
+
+/** How many leads are left in the pool under the same filters. */
+async function countAvailable(
+  db: ReturnType<typeof supabaseAdmin>,
+  categories: LeadCategory[],
+  sources: LeadSourceOption[] | undefined,
+  localOnly: boolean,
+) {
+  let query = db
+    .from("lead_pool")
+    .select("id", { count: "exact", head: true })
+    .is("imported_at", null)
+    .in("category", categories);
+
+  if (sources?.length) query = query.in("source", sources);
+  if (localOnly) query = query.eq("scope", "local");
+
+  const { count } = await query;
+  return count ?? 0;
 }

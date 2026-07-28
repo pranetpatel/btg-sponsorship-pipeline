@@ -5,9 +5,11 @@ import { Download, Globe, Upload } from "lucide-react";
 import Modal from "./Modal";
 import {
   CONTACT_RULES,
-  SCRAPE_GROUPS,
+  LEAD_CATEGORIES,
+  LEAD_SOURCE_OPTIONS,
   type ContactRule,
-  type ScrapeGroup,
+  type LeadCategory,
+  type LeadSourceOption,
 } from "@/lib/scrape-groups";
 
 type Tab = "scrape" | "csv" | "manual";
@@ -58,36 +60,31 @@ export default function ImportPanel({
   );
 }
 
-/* ── Lead discovery ──────────────────────────────────────────────────── */
+/* ── Pulling leads off the pool ───────────────────────────────────────── */
 
 function ScrapeTab({ onDone }: { onDone: () => void }) {
-  const [groups, setGroups] = useState<Set<ScrapeGroup>>(
-    new Set<ScrapeGroup>(["local_business"]),
+  const [categories, setCategories] = useState<Set<LeadCategory>>(
+    new Set<LeadCategory>(["small_business"]),
   );
+  const [sources, setSources] = useState<Set<LeadSourceOption>>(new Set());
   const [limit, setLimit] = useState(60);
-  const [findEmails, setFindEmails] = useState(true);
   const [localOnly, setLocalOnly] = useState(true);
   const [contactRule, setContactRule] = useState<ContactRule>("email_or_phone");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
-    scanned: number;
-    chainsSkipped: number;
-    noContactSkipped: number;
-    found: number;
     imported: number;
     skipped: number;
-    emailsFound: number;
     withEmail: number;
+    remaining: number;
+    empty?: boolean;
   } | null>(null);
 
-  function toggle(g: ScrapeGroup) {
-    setGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(g)) next.delete(g);
-      else next.add(g);
-      return next;
-    });
+  function toggleIn<T>(set: Set<T>, apply: (s: Set<T>) => void, value: T) {
+    const next = new Set(set);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    apply(next);
   }
 
   async function run() {
@@ -99,15 +96,15 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          groups: [...groups],
+          categories: [...categories],
+          sources: sources.size ? [...sources] : undefined,
           limit,
-          findEmails,
           localOnly,
           contactRule,
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Lead search failed");
+      if (!res.ok) throw new Error(data.error ?? "Could not pull leads");
       setResult(data);
       onDone();
     } catch (err) {
@@ -120,44 +117,72 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
   return (
     <div className="space-y-5">
       <p className="text-sm text-purple-900/65">
-        Pulls businesses and organizations around London, Ontario from
-        OpenStreetMap, screens out chains, hunts down a contact email on each
-        website, and drops anything you would have no way to reach. Duplicates
-        are matched on email and skipped.
-      </p>
-      <p className="rounded-lg bg-cream-dark/50 px-3 py-2.5 text-sm text-purple-900/70">
-        Worth knowing before you set the number: OpenStreetMap is thin on
-        contact details. Of the London businesses listed there, about 18% have
-        a website, 17% a phone number, and only 1% an email — the rest are
-        just a name on a map. Searching websites is what turns most of the
-        first group into real addresses. Asking for 60 and getting 25 is
-        normal, and those 25 are ones you can actually write to.
+        Pulls from the lead pool: London businesses gathered from Overture
+        Maps, the Downtown London BIA directory, and the Chamber of Commerce,
+        already screened for chains and already crawled for email addresses.
+        Anything already on your board is skipped.
       </p>
 
       <div>
-        <p className="btg-label">What to look for</p>
+        <p className="btg-label">What kind of business</p>
         <div className="grid gap-2 sm:grid-cols-2">
-          {SCRAPE_GROUPS.map((g) => (
+          {LEAD_CATEGORIES.map((c) => (
             <label
-              key={g.value}
+              key={c.value}
               className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition ${
-                groups.has(g.value)
+                categories.has(c.value)
                   ? "border-purple-400 bg-purple-50"
                   : "border-cream-dark bg-white hover:border-purple-200"
               }`}
             >
               <input
                 type="checkbox"
-                checked={groups.has(g.value)}
-                onChange={() => toggle(g.value)}
+                checked={categories.has(c.value)}
+                onChange={() => toggleIn(categories, setCategories, c.value)}
                 className="mt-0.5 h-4 w-4 accent-[#4F2683]"
               />
               <span>
                 <span className="block text-sm font-medium text-purple-800">
-                  {g.label}
+                  {c.label}
                 </span>
                 <span className="block text-xs text-purple-900/55">
-                  {g.hint}
+                  {c.hint}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="btg-label">
+          Which list to draw from{" "}
+          <span className="font-normal normal-case tracking-normal text-purple-900/45">
+            — leave all off to use every source
+          </span>
+        </p>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {LEAD_SOURCE_OPTIONS.map((s) => (
+            <label
+              key={s.value}
+              className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition ${
+                sources.has(s.value)
+                  ? "border-purple-400 bg-purple-50"
+                  : "border-cream-dark bg-white hover:border-purple-200"
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={sources.has(s.value)}
+                onChange={() => toggleIn(sources, setSources, s.value)}
+                className="mt-0.5 h-4 w-4 accent-[#4F2683]"
+              />
+              <span>
+                <span className="block text-sm font-medium text-purple-800">
+                  {s.label}
+                </span>
+                <span className="block text-xs text-purple-900/55">
+                  {s.hint}
                 </span>
               </span>
             </label>
@@ -225,40 +250,25 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label className="btg-label" htmlFor="limit">
-            How many to add, up to {limit}
-          </label>
-          <input
-            id="limit"
-            type="range"
-            min={10}
-            max={200}
-            step={10}
-            value={limit}
-            onChange={(e) => setLimit(Number(e.target.value))}
-            className="w-full accent-[#4F2683]"
-          />
-        </div>
-        <label className="flex items-center gap-2.5 self-end pb-1 text-sm text-purple-900/75">
-          <input
-            type="checkbox"
-            checked={findEmails}
-            onChange={(e) => setFindEmails(e.target.checked)}
-            className="h-4 w-4 accent-[#4F2683]"
-          />
-          Search websites for emails (slower, finds most of them)
+      <div>
+        <label className="btg-label" htmlFor="limit">
+          How many to add, up to {limit}
         </label>
-      </div>
-
-      {!findEmails && contactRule === "email" && (
-        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          Requiring an email without searching websites will find almost
-          nothing — OpenStreetMap itself carries an email for very few
-          businesses. Turn the website search back on.
+        <input
+          id="limit"
+          type="range"
+          min={10}
+          max={200}
+          step={10}
+          value={limit}
+          onChange={(e) => setLimit(Number(e.target.value))}
+          className="w-full accent-[#4F2683]"
+        />
+        <p className="mt-1 text-xs text-purple-900/50">
+          Leads with an email come first, so a small batch is still a workable
+          one.
         </p>
-      )}
+      </div>
 
       {error && (
         <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -266,7 +276,16 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
         </p>
       )}
 
-      {result && (
+      {result?.empty && (
+        <div className="rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+          Nothing left in the pool matching those filters. Loosen them, or ask
+          whoever runs the pipeline to refresh the pool with{" "}
+          <code className="rounded bg-amber-100 px-1">npm run leads:refresh</code>
+          .
+        </div>
+      )}
+
+      {result && !result.empty && (
         <div className="space-y-1.5 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
           <p className="font-medium">
             Added {result.imported} new{" "}
@@ -274,32 +293,22 @@ function ScrapeTab({ onDone }: { onDone: () => void }) {
             of them with an email.
           </p>
           <p className="text-emerald-900/70">
-            Looked at {result.scanned} listings.
-            {result.chainsSkipped
-              ? ` Passed on ${result.chainsSkipped} chain ${
-                  result.chainsSkipped === 1 ? "location" : "locations"
-                }.`
-              : ""}
-            {result.noContactSkipped
-              ? ` Passed on ${result.noContactSkipped} with no way to reach them.`
-              : ""}
             {result.skipped
-              ? ` ${result.skipped} were already on your list.`
+              ? `${result.skipped} were already on your board. `
               : ""}
-            {result.emailsFound
-              ? ` ${result.emailsFound} emails came off the businesses' own websites.`
-              : ""}
+            {result.remaining.toLocaleString()} leads still in the pool under
+            these filters.
           </p>
         </div>
       )}
 
       <button
         onClick={run}
-        disabled={busy || !groups.size}
+        disabled={busy || !categories.size}
         className="btg-btn-primary w-full"
       >
         <Globe size={15} />
-        {busy ? "Searching, this takes a minute" : "Find leads"}
+        {busy ? "Adding" : "Add leads from the pool"}
       </button>
     </div>
   );
